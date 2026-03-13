@@ -70,6 +70,7 @@ def load_silver_data_from_s3_to_pg(**context) -> None:
         logging.info(f"💻 Загружаю данные из {silver_s3_key} в stage таблицу")
 
         con.execute(load_sql("silver_to_stage_dwh.sql", silver_s3_key=silver_s3_key))
+        con.execute("DETACH pg_conn;")
     finally:
         con.close()
     logging.info("✅ Успешно загружено в stage таблицу")
