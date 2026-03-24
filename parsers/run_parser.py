@@ -17,13 +17,14 @@ from playwright_stealth import Stealth
 logger = setup_logger()
 
 
-async def collect_flats_from_url(browser, flat_ids: set, url: str, file_obj: str) -> None:
+async def collect_flats_from_url(browser, flat_ids: set, url: str, file_obj: str, start_time_dt: datetime) -> None:
     """Собирает данные о квартирах с одного URL и сохраняет их в jsonl файл
     Параметры:
     - browser: экземпляр браузера Playwright
     - flat_ids: множество уже собранных id квартир для избежания дубликатов
     - url: URL страницы для парсинга
-    - file_obj: обьект файла для сохранения результатов"""
+    - file_obj: обьект файла для сохранения результатов
+    - start_time_dt: дата из Airflow для поля parsed_at"""
     context = await browser.new_context(
         user_agent=random.choice(config_parser.USER_AGENTS), extra_http_headers=config_parser.DEFAULT_HEADERS
     )
@@ -84,6 +85,12 @@ async def collect_flats_from_url(browser, flat_ids: set, url: str, file_obj: str
                 desc_el = card.find("div", {"data-name": "Description"})
                 description = desc_el.get_text(strip=True) if desc_el else None
 
+                # время парсинга - дата из Airflow, но с текущим временем
+                now = datetime.now()
+                parsed_at = start_time_dt.replace(
+                    hour=now.hour, minute=now.minute, second=now.second, microsecond=now.microsecond
+                )
+
                 flat_data = {
                     "id": cian_id,
                     "link": link,
@@ -91,7 +98,7 @@ async def collect_flats_from_url(browser, flat_ids: set, url: str, file_obj: str
                     "price": price_text,
                     "address": address,
                     "metro": metro,
-                    "parsed_at": datetime.now().isoformat(),
+                    "parsed_at": parsed_at.isoformat(),
                     "description": description,
                 }
 
@@ -116,14 +123,14 @@ async def collect_flats_from_url(browser, flat_ids: set, url: str, file_obj: str
 
 async def main():
     os.makedirs("data", exist_ok=True)
-
+    # получаем дату из переменной окружения, которую задает Airflow
     env_date = os.getenv("EXECUTION_DATE")
-    if env_date:
-        start_time_dt = datetime.strptime(env_date, "%Y-%m-%d")
-        logger.info(f"Использую дату из Airflow: {env_date}")
-    else:
-        start_time_dt = datetime.now()
-        logger.info(f"Дата из Airflow не передана, использую текущую: {start_time_dt.strftime('%Y-%m-%d')}")
+    if not env_date:
+        logger.critical("❌ ОШИБКА: EXECUTION_DATE не задана!")
+        exit(1)
+
+    start_time_dt = datetime.strptime(env_date, "%Y-%m-%d")
+    logger.info(f"Использую дату из Airflow: {env_date}")
 
     async with Stealth().use_async(async_playwright()) as p:
         start_time = time.time()  # для измерения времени парсинга
@@ -149,7 +156,7 @@ async def main():
                 async with semaphore:
                     # рандом задержка перед началом парсинга каждого URL
                     await asyncio.sleep(random.uniform(2, 5))
-                    return await collect_flats_from_url(browser, flat_ids, url, f)
+                    return await collect_flats_from_url(browser, flat_ids, url, f, start_time_dt)
 
             # запускаем парсинг по всем URL параллельно, но с ограничением по семафору
             tasks = [sem_task(u) for u in config_parser.URLS]

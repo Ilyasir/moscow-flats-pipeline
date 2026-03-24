@@ -16,6 +16,7 @@ x-airflow-common:
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__WEBSERVER__BASE_URL: "http://localhost:${_AIRFLOW_WWW_PORT}"
   networks:
     - data_network
   # /var/run/docker.sock чтобы Airflow мог сам запускать контейнеры (юзается для DockerOperator)
@@ -74,14 +75,15 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     entrypoint: >
       /bin/sh -c "
-      until /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do 
-        echo 'Waiting for MinIO...'; 
+      until /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do
+        echo 'Waiting for MinIO...';
         sleep 2; 
       done;
-      
+
       /usr/bin/mc mb myminio/raw --ignore-existing;
       /usr/bin/mc mb myminio/silver --ignore-existing;
-      
+      /usr/bin/mc mb myminio/ml-data --ignore-existing;
+
       echo 'Buckets created successfully!';
       exit 0;
       "
@@ -216,6 +218,10 @@ services:
           --conn-login "${MINIO_ROOT_USER}" \
           --conn-password "${MINIO_ROOT_PASSWORD}" \
           --conn-extra "{\"endpoint_url\": \"http://minio:9000\", \"addressing_style\": \"path\", \"region_name\": \"ru-central1\"}" || true
+        airflow connections add 'telegram_conn' \
+          --conn-type 'telegram' \
+          --conn-password "${TELEGRAM_BOT_TOKEN}" \
+          --conn-host "${TELEGRAM_CHAT_ID}" || true
     environment:
       <<: *airflow-common-env
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}

@@ -25,8 +25,8 @@ COPY (
                 ELSE NULLIF(regexp_extract(title, '^(\d+)', 1), '')::INT
             END as rooms_count,
             -- этажи
-            NULLIF(regexp_extract(title, '(\d+)/\d+\s*этаж', 1), '')::INT as floor,
-            NULLIF(regexp_extract(title, '\d+/(\d+)\s*этаж', 1), '')::INT as total_floors,
+            NULLIF(regexp_extract(title, '(\d+)/\d+\s*(?:этаж|эт\.)', 1), '')::INT as floor,
+            NULLIF(regexp_extract(title, '\d+/(\d+)\s*(?:этаж|эт\.)', 1), '')::INT as total_floors,
             -- для цены убираем знак рубля, пробелы
             regexp_replace(price, '[^0-9]', '', 'g')::BIGINT as price,
             -- география (адрес, округ, район)
@@ -71,6 +71,8 @@ COPY (
             AND price IS NOT NULL
             AND okrug IS NOT NULL
             AND rooms_count IS NOT NULL
+            AND floor IS NOT NULL
+            AND total_floors IS NOT NULL
             AND (district IS NOT NULL OR is_new_moscow) -- у новой москвы района может не быть
             AND price / NULLIF(area, 0) > 50000 -- на всякий, мало ли 0 в площади
     )

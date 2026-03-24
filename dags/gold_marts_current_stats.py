@@ -3,6 +3,7 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from utils.datasets import GOLD_DATASET_HISTORY
+from utils.telegram import on_failure_callback
 
 OWNER = "ilyas"
 DAG_ID = "gold_marts_current_stats"
@@ -16,6 +17,7 @@ LONG_DESCRIPTION = """
 1. **dm_district_current**: Сводная статистика по районам (средняя цена, медиана за метр, кол-во квартир).
 2. **dm_metro_current**: Статистика по станциям метро. Включает только станции с 20+ объявлениями,
 чтобы было статистичеки верно. Также есть среднее расстояние в минутах пешком.
+3. **dm_price_drops**: квартиры, на которые цена снизилась более чем на 100к относительно предыдущей записи.
 
 Запускается автоматически после обновления датасета `GOLD_DATASET_HISTORY`.
 Перезаписывается полность, тоесть юзается `TRUNCATE` перед вставкой, так как витрина показывает только текущие квартиры
@@ -27,6 +29,7 @@ default_args = {
     "start_date": pendulum.datetime(2026, 1, 18, tz="Europe/Moscow"),
     "retries": 2,
     "retry_delay": pendulum.duration(minutes=10),
+    "on_failure_callback": on_failure_callback,
 }
 
 
@@ -110,8 +113,38 @@ with DAG(
         """,
     )
 
+    build_dm_price_drops = SQLExecuteQueryOperator(
+        task_id="build_dm_price_drops",
+        conn_id="pg_conn",
+        autocommit=True,
+        sql="""
+            TRUNCATE TABLE gold.dm_price_drops;
+
+            INSERT INTO gold.dm_price_drops (
+                flat_hash, link, district, area, rooms_count, 
+                old_price, new_price, drop_percent, drop_abs
+            )
+            with old_and_new_price as (select
+                flat_hash, link, district, area, rooms_count,
+                LAG(price, 1, price) over(partition by flat_hash ORDER BY effective_from) as old_price,
+                price as new_price,
+                is_active
+            from gold.history_flats)
+            select
+                flat_hash, link, district, area, rooms_count,
+                old_price, new_price,
+                round((old_price - new_price) * 100.0 / old_price, 2) AS drop_percent,
+                (old_price - new_price) as drop_abs
+            from old_and_new_price
+            where new_price < old_price
+                and is_active = true
+                and (old_price - new_price) > 100000
+            order by drop_percent desc
+        """,
+    )
+
     end = EmptyOperator(
         task_id="end",
     )
 
-    start >> [build_dm_district_current, build_dm_metro_current] >> end  # паралельно
+    start >> [build_dm_district_current, build_dm_metro_current, build_dm_price_drops] >> end  # паралельно

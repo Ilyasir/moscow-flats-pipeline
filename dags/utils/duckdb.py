@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import duckdb
 from airflow.hooks.base import BaseHook
 from airflow.utils.log.secrets_masker import mask_secret
+from jinja2 import Template
 
 
 def connect_duckdb_to_s3(con: duckdb.DuckDBPyConnection, conn_id: str = "s3_conn") -> duckdb.DuckDBPyConnection:
@@ -58,3 +61,18 @@ def connect_duckdb_to_pg(con: duckdb.DuckDBPyConnection, conn_id: str = "pg_conn
     # сразу примонтируем базу данных, чтобы потом в SQL запросах можно было обращаться к flats_db
     con.execute("ATTACH '' AS flats_db (TYPE postgres, SECRET dwh_postgres);")
     return con
+
+
+# dags/sql/
+sql_dir = Path(__file__).parent.parent / "sql"
+
+
+def load_sql(file_name: str, **params) -> str:
+    """Загружает SQL запрос из папки sql и подставляет параметры"""
+    file_path = sql_dir / file_name  # формируем полный путь к SQL файлу внутри папки
+    # чекаем, есть ли файл
+    if not file_path.exists():
+        raise FileNotFoundError(f"SQL файл не найден: {file_path}")
+    sql_template = file_path.read_text(encoding="utf-8")  # читаем как строку
+    # подставляем через jinja
+    return Template(sql_template).render(**params)

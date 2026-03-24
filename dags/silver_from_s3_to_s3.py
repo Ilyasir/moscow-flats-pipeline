@@ -7,8 +7,8 @@ from airflow.exceptions import AirflowFailException
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 from utils.datasets import RAW_DATASET_SALES_FLATS, SILVER_DATASET_SALES_FLATS
-from utils.duckdb import connect_duckdb_to_s3
-from utils.sql import load_sql
+from utils.duckdb import connect_duckdb_to_s3, load_sql
+from utils.telegram import on_failure_callback, on_success_callback
 
 OWNER = "ilyas"
 DAG_ID = "silver_from_s3_to_s3"
@@ -45,6 +45,7 @@ default_args = {
     "start_date": pendulum.datetime(2026, 1, 18, tz="Europe/Moscow"),
     "retries": 2,
     "retry_delay": pendulum.duration(minutes=10),
+    "on_failure_callback": on_failure_callback,
 }
 
 
@@ -108,7 +109,7 @@ def check_silver_data_quality(**context):
     if silver_total_rows == 0:
         raise AirflowFailException("Файл пустой!")
 
-    if percent_removed > 50:
+    if percent_removed > 25:
         logging.error(f"❌ Удалено {percent_removed:.2f}% данных после трансформации.")
         raise AirflowFailException("Слишком много данных удалено!")
 
@@ -127,7 +128,8 @@ def check_silver_data_quality(**context):
         logging.warning(f"⚠️ Подозрительно большая площадь: {max_area} м²")
 
     if min_price < 1_000_000:
-        logging.warning(f"⚠️ Подозрительно маленькая цена: {min_price} руб.")
+        logging.error(f"❌ Слишком маленькая цена: {min_price} руб.")
+        raise AirflowFailException()
 
     logging.info("✅ Проверка пройдена")
     logging.info(f"🧹 Удалено дублей и мусора: {diff} строк ({percent_removed:.2f}%).")
@@ -157,6 +159,7 @@ with DAG(
     check_data_quality = PythonOperator(
         task_id="check_data_quality",
         python_callable=check_silver_data_quality,
+        on_success_callback=on_success_callback,
     )
 
     end = EmptyOperator(

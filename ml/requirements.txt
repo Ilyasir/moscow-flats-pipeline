@@ -1,0 +1,7 @@
+# ML
+catboost==1.2.10
+pandas==2.2.2
+pyarrow==23.0.1
+scikit-learn==1.4.2
+# S3
+boto3==1.42.27

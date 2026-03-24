@@ -8,8 +8,8 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from utils.datasets import RAW_DATASET_SALES_FLATS
-from utils.duckdb import connect_duckdb_to_s3
-from utils.sql import load_sql
+from utils.duckdb import connect_duckdb_to_s3, load_sql
+from utils.telegram import on_failure_callback, on_success_callback
 
 OWNER = "ilyas"
 DAG_ID = "raw_from_parser_to_s3"
@@ -47,8 +47,9 @@ LONG_DESCRIPTION = """
 default_args = {
     "owner": OWNER,
     "start_date": pendulum.datetime(2026, 1, 18, tz="Europe/Moscow"),
-    "retries": 2,
+    "retries": 1,
     "retry_delay": pendulum.duration(hours=1),
+    "on_failure_callback": on_failure_callback,
 }
 
 
@@ -150,6 +151,7 @@ with DAG(
     check_data_quality = PythonOperator(
         task_id="check_data_quality",
         python_callable=check_raw_data_quality,
+        on_success_callback=on_success_callback,
     )
 
     end = EmptyOperator(

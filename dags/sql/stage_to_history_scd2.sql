@@ -38,7 +38,8 @@ WHERE NOT EXISTS (
     SELECT 1 FROM gold.history_flats hf
     WHERE hf.flat_hash = stg.flat_hash AND hf.is_active = TRUE
 );
--- чекаем результат после мержа (видно в логах Airflow), total_in_stage и active_after_merge должны совпадать
-SELECT 
+-- total_in_stage и active_after_merge должны совпадать
+SELECT -- пуш в xcom
     (SELECT count(*) FROM gold.stage_flats) as total_in_stage,
-    (SELECT count(*) FROM gold.history_flats WHERE is_active = TRUE) as active_after_merge;
+    (SELECT count(*) FROM gold.history_flats WHERE is_active = TRUE) as active_after_merge,
+    (SELECT count(*) FROM gold.history_flats) as total_in_history;

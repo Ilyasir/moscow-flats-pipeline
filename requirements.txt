@@ -1,1 +1,2 @@
 duckdb==1.4.3
+apache-airflow-providers-telegram==4.6.0
