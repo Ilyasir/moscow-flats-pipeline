@@ -1,0 +1,161 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ backend ]
+  pull_request:
+    branches: [ backend ]
+
+jobs:
+  lint:
+    name: Ruff Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: test
+      DB_PASS: test
+      DB_NAME: test
+      SECRET_KEY: testsecret
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -U test && break
+            sleep 2
+          done
+
+      - name: Apply DDL
+        run: |
+          psql -h localhost -U test -d test -f init_db/01_init_dwh.sql
+          psql -h localhost -U test -d test -f init_db/02_init_marts.sql
+          psql -h localhost -U test -d test -f init_db/03_init_app.sql
+        env:
+          PGPASSWORD: test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          export PYTHONPATH=$PYTHONPATH:.
+          pytest tests/
+
+  e2e:
+    name: E2E Playwright
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        run: |
+          cd frontend
+          npm install
+
+      - name: Install Python deps
+        run: |
+          pip install pytest pytest-playwright playwright
+
+      - name: Install browsers
+        run: playwright install --with-deps
+
+      - name: Create .env for Docker
+        run: |
+          echo "DB_HOST=postgres_dwh" >> .env
+          echo "DB_PORT=5432" >> .env
+          echo "DB_USER=test" >> .env
+          echo "DB_PASS=test" >> .env
+          echo "DB_NAME=test" >> .env
+          echo "SECRET_KEY=testsecret" >> .env
+          echo "ACCESS_TOKEN_EXPIRE_MINUTES=30" >> .env
+          echo "REFRESH_TOKEN_EXPIRE_DAYS=7" >> .env
+
+          echo "DATABASE_URL=postgresql+psycopg2://test:test@postgres_dwh:5432/test" >> .env
+
+          echo "POSTGRES_USER=test" >> .env
+          echo "POSTGRES_PASSWORD=test" >> .env
+          echo "POSTGRES_DB=test" >> .env
+          echo "POSTGRES_PORT=5432" >> .env
+
+          echo "MINIO_ROOT_USER=admin" >> .env
+          echo "MINIO_ROOT_PASSWORD=password" >> .env
+
+      - name: Build and run services
+        run: docker compose up -d --build backend frontend postgres_dwh minio
+
+      - name: Wait for backend
+        run: |
+          for i in {1..60}; do
+            curl -f http://localhost:8000/health && break
+            sleep 5
+          done
+
+      - name: Seed database for E2E
+        run: |
+          docker exec -i postgres_dwh psql -U test -d test <<EOF
+          INSERT INTO gold.history_flats (flat_hash, link, title, price, is_apartament, is_studio, area, rooms_count, floor, total_floors, is_new_moscow, address, city, okrug, district, metro_name, metro_min, metro_type, effective_from, is_active)
+          VALUES ('test_hash_1', 'http://test.com', 'Тестовая квартира', 20000000, false, false, 75.0, 3, 5, 12, false, 'Москва', 'Москва', 'ЦАО', 'Даниловский', 'Павелецкая', 10, 'walk', NOW(), true);
+          INSERT INTO gold.dm_district_current (okrug, district, total_flats) VALUES ('ЦАО', 'Даниловский', 1);
+          EOF
+
+      - name: Wait for frontend
+        run: |
+          for i in {1..30}; do
+            curl -f http://localhost:5173 && break
+            sleep 2
+          done
+
+      - name: Run E2E tests
+        run: pytest tests_e2e/test_main_flow.py
+
+      - name: Shutdown
+        if: always()
+        run: docker compose down

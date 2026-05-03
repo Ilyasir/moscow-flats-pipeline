@@ -2,15 +2,17 @@ import asyncio
 
 import pytest
 from app.main import app
-from app.ml.service import s3_service  # Импортируем сервис
+from app.ml.service import s3_service
 from httpx import ASGITransport, AsyncClient
 
 
-@pytest.fixture(scope="session", autouse=True)
-async def load_test_model():
-    # autouse=True значит, что модель загрузится один раз перед всеми тестами
-    if s3_service.model is None:
-        await s3_service.load_model()
+@pytest.fixture(autouse=True)
+def mock_model():
+    class DummyModel:
+        def predict(self, X):
+            return [100000.0 for _ in X]
+
+    s3_service.model = DummyModel()
 
 
 @pytest.fixture(scope="session")
